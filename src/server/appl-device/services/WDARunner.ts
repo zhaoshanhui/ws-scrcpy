@@ -117,6 +117,10 @@ export class WdaRunner extends TypedEmitter<WdaRunnerEvents> {
 
         const method = command.getMethod();
         const args = command.getArgs();
+        
+        console.log("method:", method);
+        console.log("args:", args);
+
         switch (method) {
             case WDAMethod.GET_SCREEN_WIDTH:
                 return WdaRunner.getScreenWidth(this.udid, driver);
