@@ -159,6 +159,52 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
     }
 
     public sendEvent(event: ControlMessage): void {
+        console.log("StreamReceiver: sendEvent()")
+        console.log("event:", event)
+        console.log("screenInfoMap:", this.screenInfoMap)
+        // 发送 action 信息到后端
+        var myHeaders = new Headers();
+        myHeaders.append("Content-Type", "application/json");
+        myHeaders.append("Accept", "*/*");
+
+        // 获取 screenInfoMap 的所有条目
+        const entries = this.screenInfoMap.entries();
+
+        // 初始化一个变量来存储从 Map 中提取的值
+        let screenInfo;
+
+        // 遍历 Map 的条目
+        for (let [, value] of entries) {
+            // 从每个条目中提取 contentRect 和 videoSize
+            screenInfo = {
+                contentRect: value.contentRect,
+                // videoSize: value.videoSize
+            };
+            break; // 因为我们只需要第一个条目的值，所以提取后即可退出循环
+        }
+
+
+        // 添加返回的时间
+        const currentTime = Date.now()
+        const eventWithTime = {
+            action_time: currentTime,
+            ...event,
+            ...screenInfo
+        };
+        var raw = JSON.stringify(eventWithTime)
+
+        var requestOptions = {
+            method: 'POST',
+            headers: myHeaders,
+            body: raw
+        };
+        
+        fetch("http://127.0.0.1:5000/action", requestOptions)
+            .then(response => response.text())
+            .then(result => console.log(result))
+            .catch(error => console.log('error', error));
+
+
         if (this.ws && this.ws.readyState === this.ws.OPEN) {
             this.ws.send(event.toBuffer());
         } else {
