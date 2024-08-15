@@ -184,12 +184,13 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
         }
 
 
-        // 添加返回的时间
+        // 添加返回的时间,窗口大小,设备名称
         const currentTime = Date.now()
         const eventWithTime = {
             action_time: currentTime,
             ...event,
-            ...screenInfo
+            ...screenInfo,
+            device_name: this.deviceName
         };
         var raw = JSON.stringify(eventWithTime)
 
@@ -203,7 +204,6 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
             .then(response => response.text())
             .then(result => console.log(result))
             .catch(error => console.log('error', error));
-
 
         if (this.ws && this.ws.readyState === this.ws.OPEN) {
             this.ws.send(event.toBuffer());
