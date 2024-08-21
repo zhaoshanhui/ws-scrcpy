@@ -44,6 +44,7 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
     private readonly screenInfoMap: Map<number, ScreenInfo> = new Map();
     private readonly videoSettingsMap: Map<number, VideoSettings> = new Map();
     private hasInitialInfo = false;
+    private actionMaps: Map<number, any> = new Map();
 
     constructor(params: P) {
         super(params);
@@ -158,58 +159,205 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
         }
     }
 
+
     public sendEvent(event: ControlMessage): void {
-        console.log("StreamReceiver: sendEvent()")
-        console.log("event:", event)
-        console.log("screenInfoMap:", this.screenInfoMap)
-        // 发送 action 信息到后端
-        var myHeaders = new Headers();
-        myHeaders.append("Content-Type", "application/json");
-        myHeaders.append("Accept", "*/*");
+        var actionMap = new Map();
 
-        // 获取 screenInfoMap 的所有条目
+        // 来提取窗口大小
         const entries = this.screenInfoMap.entries();
-
-        // 初始化一个变量来存储从 Map 中提取的值
         let screenInfo;
-
-        // 遍历 Map 的条目
+        // 遍历 Map 的条目，来提取窗口大小
         for (let [, value] of entries) {
-            // 从每个条目中提取 contentRect 和 videoSize
-            screenInfo = {
-                contentRect: value.contentRect,
-                // videoSize: value.videoSize
-            };
+            // 从单个条目中提取 contentRect 和 videoSize
+            screenInfo = { contentRect: value.contentRect }
             break; // 因为我们只需要第一个条目的值，所以提取后即可退出循环
         }
 
-
         // 添加返回的时间,窗口大小,设备名称
         const currentTime = Date.now()
-        const eventWithTime = {
+        const action_json = {
             action_time: currentTime,
             ...event,
             ...screenInfo,
             device_name: this.deviceName
         };
-        var raw = JSON.stringify(eventWithTime)
+        console.log(action_json)
+        for (const [key, value] of Object.entries(action_json)) {
+            actionMap.set(key, value)
+        }
+
+        this.actionMaps.set(currentTime, actionMap)
+
+        // 对于不会影响 state 的 action，直接执行
+        if ([4, 8, 9, 10, 101, 102].includes(action_json.type)) {
+            this.sendActionEvent(event)
+            this.sendAction(action_json, false)
+            actionMap.set('executed', true)
+            console.log("对于不会影响 state 的 action，直接执行")
+            return;
+        }
+
+        // 判断是否是并发动作，如果是，则直接响应之前的
+        if (this.judgeConcurrency(actionMap)) {
+            console.log("判断并发动作，前一个动作是：", this.getLastAction(actionMap))
+            if (this.getLastAction(actionMap).get('executed')) {
+                this.sendActionEvent(event)
+                this.sendAction(action_json, true)
+                actionMap.set('executed', true)
+                console.log("并发动作，直接响应")
+                return;
+            }
+            else {
+                actionMap.set('executed', false)
+                console.log("并发动作，直接不响应")
+                return;
+            }
+        }
+
+        // 对于非并发动作，判断和上一个动作间隔是否 > 3s
+        var lastExecutedAction = this.getLastExecutedAction(actionMap)
+        if (actionMap.get('action_time') - lastExecutedAction.get('action_time') > 3000) {
+            this.sendActionEvent(event)
+            this.sendAction(action_json, false)
+            actionMap.set('executed', true)
+            console.log("非并发动作，和上一个动作间隔 > 3s，执行")
+            return;
+        }
+
+        console.log("非并发动作，和上一个动作间隔 < 3s，不执行")
+
+        // #region 发请求给后端（已注释）
+        // var myHeaders = new Headers();
+        // myHeaders.append("Content-Type", "application/json");
+        // myHeaders.append("Accept", "*/*");
+
+        // var requestOptions = {
+        //     method: 'POST',
+        //     headers: myHeaders,
+        //     body: raw
+        // };
+
+        // fetch("http://127.0.0.1:5000/action", requestOptions)
+        //     // .then(response => response.text())
+        //     .then(response => response.json())
+        //     // .then(result => console.log(result))
+        //     .then(data => {
+        //         if (data.action_allow) {
+        //             console.log("action allowed:", action_json);
+        //             // if (this.ws && this.ws.readyState === this.ws.OPEN) {
+        //             //     this.ws.send(event.toBuffer());
+        //             // } else {
+        //             //     this.events.push(event);
+        //             // }
+        //             // fetch("http://127.0.0.1:5000/action_ok", requestOptions)
+        //             //     .then(response => response.text())
+        //             //     .then(result => console.log(result))
+        //             //     .catch(error => console.log('error', error));
+        //             // console.log("fetch action_ok")
+        //         }
+        //         else {
+        //             console.log("action not allowed:", action_json);
+        //         }
+        //     })
+        //     .catch(error => console.log('error', error));
+        // #endregion
+
+    }
+
+    // 执行动作（原 sendEvent 中的代码）
+    public sendActionEvent(event: ControlMessage): void {
+        if (this.ws && this.ws.readyState === this.ws.OPEN) {
+            this.ws.send(event.toBuffer());
+        } else {
+            this.events.push(event);
+        }
+    }
+
+    // 判断是否是并发动作
+    public judgeConcurrency(actionMap: Map<any, any>): boolean {
+
+        const actionType = actionMap.get('type')
+        var nonConcurrentType = [1, 4, 5, 6, 7, 8, 9, 10, 11, 101, 102]
+        if (nonConcurrentType.includes(actionType)) {
+            return false
+        }
+
+        if (actionType == 0) {
+            if (actionMap.get('action') == 1) return true;
+            else {
+                let nonConcurrentKeyCode = [3, 4, 24, 25, 26, 187]
+                if (nonConcurrentKeyCode.includes(actionMap.get('keycode'))) return false;
+                else {
+                    let lastAction = this.getLastAction(actionMap)
+                    if (lastAction.get('type') == 0 && lastAction.get('action') == 0) return true;
+                    else return false;
+                }
+            }
+        }
+
+        if (actionType == 2) {
+            if (actionMap.get('action') == 0) return false;
+            if (actionMap.get('action') == 1) return true;
+            if (actionMap.get('action') == 2) return true;
+        }
+
+        if (actionType == 3) {
+            if (this.getLastAction(actionMap).get('type') == 3) return true;
+            else return false;
+        }
+        return false
+    }
+
+    // 获取上一步的 action，用于并发 action 
+    public getLastAction(actionMap: Map<any, any>): Map<any, any> {
+        var current_action_time = actionMap.get('action_time')
+        var lastKey = 0
+
+        for (const key of this.actionMaps.keys()) {
+            if (key == current_action_time) break
+            lastKey = key
+        }
+
+        return this.actionMaps.get(lastKey)
+    }
+
+    // 获取上一个执行了的 action，用于判断时间戳
+    public getLastExecutedAction(actionMap: Map<any, any>): Map<any, any> {
+        var current_action_time = actionMap.get('action_time')
+        var lastExecutedKey = 0
+
+        for (const key of this.actionMaps.keys()) {
+            if (key == current_action_time) break
+            if (this.actionMaps.get(key).get('executed')) {
+                lastExecutedKey = key
+            }
+        }
+
+        return this.actionMaps.get(lastExecutedKey)
+    }
+
+    // 发送 action 信息到后端
+    public sendAction(action_json: any, concurrency: boolean): void {
+        console.log("给后端发请求喽：", action_json)
+        var action_json = {
+            ...action_json,
+            'concurrency': concurrency
+        }
+        var raw = JSON.stringify(action_json)
+        var myHeaders = new Headers();
+        myHeaders.append("Content-Type", "application/json");
+        myHeaders.append("Accept", "*/*");
 
         var requestOptions = {
             method: 'POST',
             headers: myHeaders,
             body: raw
         };
-        
+
         fetch("http://127.0.0.1:5000/action", requestOptions)
             .then(response => response.text())
-            .then(result => console.log(result))
+            // .then(result => console.log(result))
             .catch(error => console.log('error', error));
-
-        if (this.ws && this.ws.readyState === this.ws.OPEN) {
-            this.ws.send(event.toBuffer());
-        } else {
-            this.events.push(event);
-        }
     }
 
     public stop(): void {
