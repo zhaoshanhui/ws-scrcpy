@@ -45,6 +45,8 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
     private readonly videoSettingsMap: Map<number, VideoSettings> = new Map();
     private hasInitialInfo = false;
     private actionMaps: Map<number, any> = new Map();
+    private action_time = "";
+    private action_flag = false;
 
     constructor(params: P) {
         super(params);
@@ -160,7 +162,7 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
     }
 
 
-    public sendEvent(event: ControlMessage): void {
+    public async sendEvent(event: ControlMessage): Promise<void> {
         var actionMap = new Map();
 
         // 来提取窗口大小
@@ -198,11 +200,27 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
         }
 
         // 判断是否是并发动作，如果是，则直接响应之前的
+        // 需要判断现在的 this.action_time 是否 >= 并发的 action：
+            // 如果没有，那就说明后端还没有给响应完，需要等待
+            // 如果有，则直接响应之前的
         if (this.judgeConcurrency(actionMap)) {
             console.log("判断并发动作，前一个动作是：", this.getLastAction(actionMap))
+            var lastNonConcurrencyAction = this.getLastNonConcurrencyAction(actionMap)
+            console.log("并发动作，起始动作为：", lastNonConcurrencyAction)
+            // while (lastNonConcurrencyAction.get('action_time') > this.action_time) {
+            var executed = this.getLastAction(actionMap).has('executed')
+            while (!executed) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+                console.log("并发动作: "+actionMap.get('action_time')+", 初始动作:"+lastNonConcurrencyAction.get('action_time')+", executed:"+executed+", 等待后端相应")
+                executed = this.getLastAction(actionMap).has('executed')
+                if (Date.now() - actionMap.get('action_time') > 3000) {
+                    break
+                }
+            }
+
             if (this.getLastAction(actionMap).get('executed')) {
                 this.sendActionEvent(event)
-                this.sendAction(action_json, true)
+                this.sendActionConcurrency(action_json, true)
                 actionMap.set('executed', true)
                 console.log("并发动作，直接响应")
                 return;
@@ -214,54 +232,40 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
             }
         }
 
-        // 对于非并发动作，判断和上一个动作间隔是否 > 3s
+        // 对于非并发动作，判断和上一个动作间隔是否 > 最小动作时间间隔
         var lastExecutedAction = this.getLastExecutedAction(actionMap)
-        if (actionMap.get('action_time') - lastExecutedAction.get('action_time') > 3000) {
-            this.sendActionEvent(event)
-            this.sendAction(action_json, false)
-            actionMap.set('executed', true)
-            console.log("非并发动作，和上一个动作间隔 > 3s，执行")
+        if (actionMap.get('action_time') - lastExecutedAction.get('action_time') > 500) {
+            // this.sendActionEvent(event)
+            // this.sendAction(action_json, false)
+            // actionMap.set('executed', true)
+            // console.log("非并发动作，和上一个动作间隔 > 3s，执行")
+            // return;
+
+            // 给后端发送请求并等待响应
+            await this.sendAction(action_json, false)
+
+            // 非并发动作：根据后端响应，决定是否执行
+            if (this.action_time == actionMap.get('action_time')) {
+                if (this.action_flag == true) {
+                    this.sendActionEvent(event)
+                    actionMap.set('executed', true)
+                    console.log("非并发动作，动作间隔 > 最小动作时间间隔，且后端空闲，执行")
+                    return;
+                }
+                else {
+                    actionMap.set('executed', false)
+                    console.log("非并发动作，和上一个动作间隔 > 最小动作时间间隔，但后端忙碌，不执行")
+                    return;
+                }
+            }
+
+            // 非并发动作：后端没有正确响应，不执行
+            actionMap.set('executed', false)
+            console.log("非并发动作，后端死机，不执行")
             return;
         }
 
-        console.log("非并发动作，和上一个动作间隔 < 3s，不执行")
-
-        // #region 发请求给后端（已注释）
-        // var myHeaders = new Headers();
-        // myHeaders.append("Content-Type", "application/json");
-        // myHeaders.append("Accept", "*/*");
-
-        // var requestOptions = {
-        //     method: 'POST',
-        //     headers: myHeaders,
-        //     body: raw
-        // };
-
-        // fetch("http://127.0.0.1:5000/action", requestOptions)
-        //     // .then(response => response.text())
-        //     .then(response => response.json())
-        //     // .then(result => console.log(result))
-        //     .then(data => {
-        //         if (data.action_allow) {
-        //             console.log("action allowed:", action_json);
-        //             // if (this.ws && this.ws.readyState === this.ws.OPEN) {
-        //             //     this.ws.send(event.toBuffer());
-        //             // } else {
-        //             //     this.events.push(event);
-        //             // }
-        //             // fetch("http://127.0.0.1:5000/action_ok", requestOptions)
-        //             //     .then(response => response.text())
-        //             //     .then(result => console.log(result))
-        //             //     .catch(error => console.log('error', error));
-        //             // console.log("fetch action_ok")
-        //         }
-        //         else {
-        //             console.log("action not allowed:", action_json);
-        //         }
-        //     })
-        //     .catch(error => console.log('error', error));
-        // #endregion
-
+        console.log("非并发动作，和上一个动作间隔 < 最小动作时间间隔，不执行")
     }
 
     // 执行动作（原 sendEvent 中的代码）
@@ -275,7 +279,6 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
 
     // 判断是否是并发动作
     public judgeConcurrency(actionMap: Map<any, any>): boolean {
-
         const actionType = actionMap.get('type')
         var nonConcurrentType = [1, 4, 5, 6, 7, 8, 9, 10, 11, 101, 102]
         if (nonConcurrentType.includes(actionType)) {
@@ -336,8 +339,49 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
         return this.actionMaps.get(lastExecutedKey)
     }
 
-    // 发送 action 信息到后端
-    public sendAction(action_json: any, concurrency: boolean): void {
+    // 获取并发 action 的起始非并发 action 
+    public getLastNonConcurrencyAction(actionMap: Map<any, any>): Map<any, any> {
+        var lastAction = this.getLastAction(actionMap)
+        while(this.judgeConcurrency(lastAction)) {
+            lastAction = this.getLastAction(lastAction)
+        }
+        return lastAction
+    }
+
+    // 发送 action 信息到后端（非并发的 action，需要修改 action_time, action_flag）
+    // public sendAction(action_json: any, concurrency: boolean): void {
+    public async sendAction(action_json: any, concurrency: boolean): Promise<void> {
+        console.log("给后端发请求喽：", action_json)
+        var action_json = {
+            ...action_json,
+            'concurrency': concurrency
+        }
+        var raw = JSON.stringify(action_json)
+        var myHeaders = new Headers();
+        myHeaders.append("Content-Type", "application/json");
+        myHeaders.append("Accept", "*/*");
+
+        var requestOptions = {
+            method: 'POST',
+            headers: myHeaders,
+            body: raw
+        };
+
+        await fetch("http://127.0.0.1:5000/action", requestOptions)
+        // await fetch("http://earwig-apt-bug.ngrok-free.app", requestOptions)
+            // .then(response => response.text())
+            // .then(result => console.log(result))
+            .then(response => response.json())
+            .then(result => {
+                console.log(result)
+                this.action_flag = result['action_flag']
+                this.action_time = result['action_time']
+            })
+            .catch(error => console.log('error', error));
+    }
+
+    // 发送 action 信息到后端（并发的 action）
+    public sendActionConcurrency(action_json: any, concurrency: boolean): void {
         console.log("给后端发请求喽：", action_json)
         var action_json = {
             ...action_json,
@@ -355,9 +399,11 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
         };
 
         fetch("http://127.0.0.1:5000/action", requestOptions)
+            // .then(response => console.log("response:", response.text()))
             .then(response => response.text())
-            // .then(result => console.log(result))
+            .then(result => console.log(result))
             .catch(error => console.log('error', error));
+
     }
 
     public stop(): void {
