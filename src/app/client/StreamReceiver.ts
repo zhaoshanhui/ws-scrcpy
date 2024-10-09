@@ -201,8 +201,8 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
 
         // 判断是否是并发动作，如果是，则直接响应之前的
         // 需要判断现在的 this.action_time 是否 >= 并发的 action：
-            // 如果没有，那就说明后端还没有给响应完，需要等待
-            // 如果有，则直接响应之前的
+        // 如果没有，那就说明后端还没有给响应完，需要等待
+        // 如果有，则直接响应之前的
         if (this.judgeConcurrency(actionMap)) {
             console.log("判断并发动作，前一个动作是：", this.getLastAction(actionMap))
             var lastNonConcurrencyAction = this.getLastNonConcurrencyAction(actionMap)
@@ -211,7 +211,7 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
             var executed = this.getLastAction(actionMap).has('executed')
             while (!executed) {
                 await new Promise(resolve => setTimeout(resolve, 100));
-                console.log("并发动作: "+actionMap.get('action_time')+", 初始动作:"+lastNonConcurrencyAction.get('action_time')+", executed:"+executed+", 等待后端相应")
+                console.log("并发动作: " + actionMap.get('action_time') + ", 初始动作:" + lastNonConcurrencyAction.get('action_time') + ", executed:" + executed + ", 等待后端相应")
                 executed = this.getLastAction(actionMap).has('executed')
                 if (Date.now() - actionMap.get('action_time') > 3000) {
                     break
@@ -342,7 +342,7 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
     // 获取并发 action 的起始非并发 action 
     public getLastNonConcurrencyAction(actionMap: Map<any, any>): Map<any, any> {
         var lastAction = this.getLastAction(actionMap)
-        while(this.judgeConcurrency(lastAction)) {
+        while (this.judgeConcurrency(lastAction)) {
             lastAction = this.getLastAction(lastAction)
         }
         return lastAction
@@ -367,8 +367,9 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
             body: raw
         };
 
-        await fetch("http://127.0.0.1:5000/action", requestOptions)
-        // await fetch("http://earwig-apt-bug.ngrok-free.app", requestOptions)
+        await fetch("http://backend.cpolar.cn/action", requestOptions)
+            // await fetch("http://127.0.0.1:5000/action", requestOptions)
+            // await fetch("http://earwig-apt-bug.ngrok-free.app", requestOptions)
             // .then(response => response.text())
             // .then(result => console.log(result))
             .then(response => response.json())
@@ -398,7 +399,8 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
             body: raw
         };
 
-        fetch("http://127.0.0.1:5000/action", requestOptions)
+        // fetch("http://127.0.0.1:5000/action", requestOptions)
+        fetch("http://backend.cpolar.cn/action", requestOptions)
             // .then(response => console.log("response:", response.text()))
             .then(response => response.text())
             .then(result => console.log(result))
