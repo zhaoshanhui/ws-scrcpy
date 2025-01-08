@@ -60,6 +60,8 @@ export class StreamClientScrcpy
     private filePushHandler?: FilePushHandler;
     private fitToScreen?: boolean;
     private readonly streamReceiver: StreamReceiverScrcpy;
+    private checkInterval?: number;
+    private isChecking = false;
 
     public static registerPlayer(playerClass: PlayerClass): void {
         if (playerClass.isSupported()) {
@@ -140,6 +142,8 @@ export class StreamClientScrcpy
         } else {
             this.streamReceiver = new StreamReceiverScrcpy(this.params);
         }
+
+        this.startStatusCheck();
 
         const { udid, player: playerName } = this.params;
         this.startStream({ udid, player, playerName, fitToScreen, videoSettings });
@@ -249,6 +253,8 @@ export class StreamClientScrcpy
     };
 
     public onDisconnected = (): void => {
+        this.stopStatusCheck();
+        
         this.streamReceiver.off('deviceMessage', this.OnDeviceMessage);
         this.streamReceiver.off('video', this.onVideo);
         this.streamReceiver.off('clientsStats', this.onClientsStats);
@@ -501,4 +507,80 @@ export class StreamClientScrcpy
             HostTracker.getInstance().destroy();
         }
     };
+
+    // 添加一个新的方法来显示/隐藏提示信息
+    private showLoadingTip(show: boolean, message: string = '正在处理请求...') {
+        const tipId = 'action-loading-tip';
+        let tipElement = document.getElementById(tipId);
+        
+        if (show) {
+            if (!tipElement) {
+                tipElement = document.createElement('div');
+                tipElement.id = tipId;
+                tipElement.style.cssText = `
+                    position: fixed;
+                    top: 10%;
+                    left: 50%;
+                    transform: translate(-50%, -50%);
+                    background: rgba(0, 0, 0, 0.8);
+                    color: white;
+                    padding: 20px 40px;
+                    border-radius: 8px;
+                    z-index: 9999;
+                    font-size: 24px;
+                    font-weight: bold;
+                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+                    text-align: center;
+                    min-width: 300px;
+                `;
+                document.body.appendChild(tipElement);
+            }
+            tipElement.textContent = message;
+        } else if (tipElement) {
+            tipElement.remove();
+        }
+    }
+
+    private startStatusCheck(): void {
+        if (this.checkInterval) {
+            clearInterval(this.checkInterval);
+        }
+        
+        this.checkInterval = window.setInterval(async () => {
+            if (this.isChecking) {
+                return;
+            }
+            
+            this.isChecking = true;
+            try {
+                await this.checkCaptureStatus();
+            } finally {
+                this.isChecking = false;
+            }
+        }, 100);
+    }
+
+    private stopStatusCheck(): void {
+        if (this.checkInterval) {
+            clearInterval(this.checkInterval);
+            this.checkInterval = undefined;
+        }
+    }
+
+    private async checkCaptureStatus(): Promise<void> {
+        try {
+            const response = await fetch("http://127.0.0.1:5000/record_status");
+            const result = await response.json();
+            
+            if (result.is_recording) {
+                this.showLoadingTip(true, "正在记录，已禁用手机...");
+            } else {
+                this.showLoadingTip(false);
+            }
+        } catch (error) {
+            console.error("检查状态失败:", error);
+            this.showLoadingTip(false);
+        }
+    }
+
 }

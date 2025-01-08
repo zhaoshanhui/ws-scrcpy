@@ -367,8 +367,8 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
             body: raw
         };
 
-        await fetch("http://backend.cpolar.cn/action", requestOptions)
-            // await fetch("http://127.0.0.1:5000/action", requestOptions)
+        // await fetch("http://backend.cpolar.cn/action", requestOptions)
+        await fetch("http://127.0.0.1:5000/action", requestOptions)
             // await fetch("http://earwig-apt-bug.ngrok-free.app", requestOptions)
             // .then(response => response.text())
             // .then(result => console.log(result))
@@ -399,13 +399,12 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
             body: raw
         };
 
-        // fetch("http://127.0.0.1:5000/action", requestOptions)
-        fetch("http://backend.cpolar.cn/action", requestOptions)
+        fetch("http://127.0.0.1:5000/action", requestOptions)
+        // fetch("http://backend.cpolar.cn/action", requestOptions)
             // .then(response => console.log("response:", response.text()))
             .then(response => response.text())
             .then(result => console.log(result))
             .catch(error => console.log('error', error));
-
     }
 
     public stop(): void {
